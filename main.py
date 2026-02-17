@@ -1,7 +1,10 @@
 import json
 import time
 import re
+from discoverer import LeadDiscoverer
 from scout import SDRScout
+from identity import IdentityHunter
+
 
 def apply_strict_privacy_mask(profile, target_index):
     """
@@ -35,40 +38,69 @@ def apply_strict_privacy_mask(profile, target_index):
 
     return masked
 
-def main():
-    print("--- KRYKOS SDR SCOUT v1.1 [Strict Privacy Mode] ---")
-    
-    scout = SDRScout()
-    
-    target_urls = [
-        "https://www.socialflyny.com/",          
-        "https://www.theagencyre.com/region/miami"
-    ]
-    
-    for index, url in enumerate(target_urls):
-        print(f"\n" + "-"*50)
-        print(f"[*] Analyzing target...")
-        
-        raw_content = scout.scrape_website(url)
-        if not raw_content or "Error" in raw_content:
-            continue
 
-        analysis_raw = scout.analyze_business_model(raw_content)
+
+def main():
+    print("--- KRYKOS AUTOMATED LEAD HUNTER v2.0 ---")
+    
+    # 1. Ask the user what to hunt
+    niche = input("> What niche/location are we hunting today? (e.g. Marketing Agencies in Austin): ")
+    
+    discoverer = LeadDiscoverer()
+    scout = SDRScout()
+    hunter = IdentityHunter()
+    
+    # 2. Find the leads
+    leads = discoverer.find_companies(niche, count=3) # Let's start with 3 for testing
+    
+    final_campaign = []
+
+    for i, lead in enumerate(leads):
+        print(f"\n" + "="*60)
+        print(f"[*] Pipeline Step 1/3: Scraping {lead['url']}...")
+        
+        # 3. Analyze the business
+        site_data = scout.scrape_website(lead['url'])
+        if not site_data["main_md"]:
+            continue
+            
+        # Pass lead['name'] as a fallback to the analyzer
+        analysis_raw = scout.analyze_business_model(site_data["main_md"], lead['name'])
         
         try:
             profile = json.loads(analysis_raw)
-            profile['source_url'] = url
             
-            # APPLY STRICT MASK
-            masked_profile = apply_strict_privacy_mask(profile, index)
+            # SAFE ACCESS using .get() to avoid KeyError
+            company_name = profile.get('company_name') or lead['name']
+            profile['company_name'] = company_name # Ensure it exists for later steps
+            profile['source_url'] = lead['url']
             
-            print("\n[+] ANALYTICAL REPORT (FULLY ANONYMIZED):")
-            print(json.dumps(masked_profile, indent=2))
+            # 4. Find the human
+            print(f"[*] Pipeline Step 2/3: Hunting socials for {company_name}...")
+            combined_site_text = site_data["main_md"] + "\n" + site_data["about_md"]
+            person_data = hunter.find_decision_maker(company_name, combined_site_text)
+            
+            full_prospect = {
+                "business": profile,
+                "decision_maker": person_data
+            }
+            
+            # 5. Mask and Show
+            masked = apply_strict_privacy_mask(profile, i) # Mask only the business part for display
+            print("\n[+] DISCOVERED PROSPECT (MASKED):")
+            print(json.dumps(masked, indent=2))
+            
+            final_campaign.append(full_prospect)
             
         except Exception as e:
-            print(f"[!] Analysis failed.")
+            print(f"[!] Pipeline failed for {lead['url']}: {e}")
+            
+        time.sleep(2) # Be nice to the web
 
-        time.sleep(1)
+    # 6. Save the unmasked data for your private use
+    with open("campaign_results.json", "w") as f:
+        json.dump(final_campaign, f, indent=2)
+    print(f"\n🏁 Hunting complete. {len(final_campaign)} full profiles saved to campaign_results.json")
 
 if __name__ == "__main__":
     main()
